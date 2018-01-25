@@ -6,6 +6,9 @@ importScripts('./js/build/OrbitControls.js'); //<!-- 鼠标控制 （OrbitContro
 importScripts('./js/build/StereoEffect.js'); //双屏立体
 importScripts('./js/build/VREffect.js'); //双屏立体
 importScripts('./js/build/VRControls.js'); //双屏立体
+importScripts('./js/build/webvr-polyfill.js'); //双屏立体
+importScripts('./js/build/webvr-manager.js'); //双屏立体
+
 //调色板
 var Colors = {
 	red: 0xf25346,
@@ -19,18 +22,23 @@ var Colors = {
 window.addEventListener('load', init, false);
 //初始化
 function init() {
-	// 创建场景，相机和渲染器
-	createScene();
+	// 初始化场景，相机和渲染器
+	initSceneCameraRenderer();
+	initGaze(); //凝视
 	// 添加光源
 	createLights();
 	// 添加对象
 	createSea(); //海
 	createSky(); //天空
 	createPlane(); //飞机
+//	createBgSky(); //全景背景
 
-	initDevices(); //陀螺仪
-	initControls(); //控制器
-	initEffect(); //立体
+	//		echoText(); //输出文字
+	loadFont('./fonts/gentilis_bold.typeface.json');//英文
+	//	loadFont('./fonts/LiXuke_Regular.json');//中文
+
+	initVR(); //初始化vr控制&分屏&渲染
+	createCrosshair(); //准心
 
 	//添加监听器
 	document.addEventListener('mousemove', handleMouseMove, false); //鼠标移动
@@ -43,60 +51,52 @@ function init() {
 
 function loop() {
 	// 使螺旋桨旋转并转动大海和云
-	// airplane.propeller.rotation.x += .2;
 	sea.mesh.rotation.z += 0.005;
 	sky.mesh.rotation.z += 0.005;
-
-	updatePlane(); // 更新每帧的飞机
+	airplane.propeller.rotation.x += 0.3; //螺旋桨
+	airplane.pilot.updateHairs(); //秀发
+	//	textmesh.rotation.y += 0.05;
 	sea.moveWaves(); //浪
 
-	Devices.update(); //更新陀螺仪
-	Controls.update(); //更新控制器
-	
+	//	updatePlane(); // 更新每帧的飞机
 
 	// airplane.mesh.rotation.y = Math.PI * 1.0; //逆时针旋转270
 	// sea.mesh.rotation.x = Math.PI/2;//旋转大海
 
-	// 渲染场景
-	renderer.render(scene, camera);
-	//	Effect.render(scene, camera);
+	gaze();//焦点
+	//实时更新相机的位置和转角
+	vrControls.update();
+	vrManager.render(scene, camera); //渲染
 
-	// 重新调用 render() 函数
 	requestAnimationFrame(loop);
+//	effect.requestAnimationFrame(loop);
 	//	 setTimeout(loop,160.6);
 }
 
-var Controls, Devices;
-// 初始化控制器
-function initControls() {
-	Controls = new THREE.OrbitControls(camera, renderer.domElement);
+var vrControls, vrEffect, vrManager;
 
-	//	Controls.autoRotate = true;
+function initVR() {
+	//初始化VR控制器需要传入场景相机
+	vrControls = new THREE.VRControls(camera);
+	//初始化VR渲染器需要传入场景渲染器
+	vrEffect = new THREE.VREffect(renderer);
+	//按钮和全屏模式管理
+	var params = {
+		hideButton: false, // Default: false.
+		isUndistorted: false // Default: false.
+	};
+	//初始化VR适配器，传入渲染器和分屏器
+	vrManager = new WebVRManager(renderer, vrEffect, params);
 
-	//	控制焦距
-	Controls.target.set(
-		camera.position.x + 0.01,
-		camera.position.y,
-		camera.position.z
-	);
-}
-// 初始化陀螺仪
-function initDevices() {
-	Devices = new THREE.DeviceOrientationControls(camera);
-}
-//立体效果-vr双屏
-var Effect;
+	createCrosshair();
 
-function initEffect() {
-	Effect = new THREE.StereoEffect(renderer);
-	Effect.setSize(WIDTH, HEIGHT);
 }
 
 //创建场景、相机、渲染器
 var scene, camera, fieldOfView, aspectRatio, nearPlane,
 	farPlane, HEIGHT, WIDTH, renderer, container;
 
-function createScene() {
+function initSceneCameraRenderer() {
 	// 获得屏幕的宽和高，
 	// 用它们设置相机的纵横比
 	// 还有渲染器的大小
@@ -109,8 +109,8 @@ function createScene() {
 	// scene.fog = new THREE.Fog(0xf7d9aa, 100, 950);
 
 	// 创建相机
-	aspectRatio = WIDTH / HEIGHT;
 	fieldOfView = 60;
+	aspectRatio = WIDTH / HEIGHT;
 	nearPlane = 1;
 	farPlane = 10000;
 	/**
@@ -126,6 +126,7 @@ function createScene() {
 		nearPlane,
 		farPlane
 	);
+	scene.add(camera);
 
 	// 设置相机的位置
 	camera.position.x = -30;
@@ -166,7 +167,7 @@ function handleWindowResize() {
 	renderer.setSize(WIDTH, HEIGHT);
 	camera.aspect = WIDTH / HEIGHT;
 	camera.updateProjectionMatrix();
-	Effect.setSize(WIDTH, HEIGHT);
+	vrEffect.setSize(WIDTH, HEIGHT);
 }
 
 //创建光源
@@ -202,10 +203,50 @@ function createLights() {
 	shadowLight.shadow.mapSize.width = 2048;
 	shadowLight.shadow.mapSize.height = 2048;
 
+	var light = new THREE.PointLight(0XFFFFFF, 0.3);
+	light.position.set(0, 200, 0);
+	scene.add(light);
+
 	// 为了使这些光源呈现效果，只需要将它们添加到场景中
 	scene.add(hemisphereLight);
 	scene.add(shadowLight);
 	scene.add(ambientLight);
+}
+
+var raycaster, center, MESHLIST, Gazing, targetMesh;
+// 初始化射线发射源
+initGaze = function() {
+	// 初始化射线发射源
+	raycaster = new THREE.Raycaster();
+	center = new THREE.Vector2();
+	MESHLIST = [];
+}
+// 创建准心
+function createCrosshair() {
+	var crosshair = new THREE.Mesh(new THREE.RingGeometry(0.02, 0.04, 32), new THREE.MeshBasicMaterial({
+		color: 0xffffff,
+		opacity: 0.5,
+		transparent: true
+	}));
+	crosshair.position.z = -2;
+	camera.add(crosshair);
+}
+//创建凝视器
+gaze = function() {
+	raycaster.setFromCamera(center, camera);
+	var intersects = raycaster.intersectObjects(MESHLIST);
+	//	console.log(MESHLIST);
+	if(intersects.length > 0) { //凝视触发
+		if(Gazing) return; //只触发一次
+		Gazing = true;
+		targetMesh = intersects[0].object;
+		//		targetMesh.gazeEvent();
+		targetMesh.material.opacity = 0.5;
+	} else {
+		//		if(Gazing) targetMesh.blurEvent();
+		if(Gazing) targetMesh.material.opacity = 1;
+		Gazing = false;
+	}
 }
 
 //实例化大海对象，并添加至场景
@@ -217,6 +258,7 @@ function createSea() {
 	sea.mesh.position.y = -600;
 	// 添加大海的网格至场景
 	scene.add(sea.mesh);
+	//	MESHLIST.push(sea.mesh);//加入扫描组
 }
 
 // 现在我们实例化天空对象，而且将它放置在屏幕中间稍微偏下的位置。
@@ -226,6 +268,23 @@ function createSky() {
 	sky = new Sky();
 	sky.mesh.position.y = -600;
 	scene.add(sky.mesh);
+}
+
+//创建背景天空
+var bgSky;
+
+function createBgSky() {
+	var geometry = new THREE.SphereGeometry(5000, 32, 32);
+	//	var geometrybox = new THREE.BoxGeometry(5,5,5);
+	var material = new THREE.MeshStandardMaterial({
+		map: THREE.ImageUtils.loadTexture('images/2294472375_24a3b8ef46_o.jpg'),
+		//		wireframe: true,
+		side: THREE.DoubleSide //非常重要-不然里面看不到图片
+	});
+	bgSky = new THREE.Mesh(geometry, material);
+	bgSky.position.y = 200;
+	//加入场景
+	scene.add(bgSky);
 }
 
 //创建飞机
@@ -264,21 +323,18 @@ function updatePlane() {
 
 	// 让我们在x轴上-100至100之间和y轴25至175之间移动飞机
 	// 根据鼠标的位置在-1与1之间的范围，我们使用的 normalize 函数实现（如下）
-	//var targetX = normalize(mousePos.x, -1, 1, -100, 100);
-	//var targetY = normalize(mousePos.y, -1, 1, 25, 175);
-	//
-	//// 在每帧通过添加剩余距离的一小部分的值移动飞机
-	//airplane.mesh.position.y += (targetY - airplane.mesh.position.y) * 0.1;
-	//// 剩余的距离按比例转动飞机
-	//airplane.mesh.rotation.z = (targetY - airplane.mesh.position.y) * 0.0128;
-	//airplane.mesh.rotation.x = (airplane.mesh.position.y - targetY) * 0.0064;
-	//
-	//// 更新飞机的位置
-	//airplane.mesh.position.x = targetX;
-	//airplane.mesh.position.y = targetY;
-	airplane.propeller.rotation.x += 0.3; //螺旋桨
+	var targetX = normalize(mousePos.x, -1, 1, -100, 100);
+	var targetY = normalize(mousePos.y, -1, 1, 25, 175);
 
-	airplane.pilot.updateHairs(); //秀发
+	// 在每帧通过添加剩余距离的一小部分的值移动飞机
+	airplane.mesh.position.y += (targetY - airplane.mesh.position.y) * 0.1;
+	// 剩余的距离按比例转动飞机
+	airplane.mesh.rotation.z = (targetY - airplane.mesh.position.y) * 0.0128;
+	airplane.mesh.rotation.x = (airplane.mesh.position.y - targetY) * 0.0064;
+
+	// 更新飞机的位置
+	airplane.mesh.position.x = targetX;
+	airplane.mesh.position.y = targetY;
 }
 
 function normalize(v, vmin, vmax, tmin, tmax) {
@@ -289,4 +345,80 @@ function normalize(v, vmin, vmax, tmin, tmax) {
 	var tv = tmin + (pc * dt);
 	// tv = tmin+((v-vmin)/(vmax-vmin)*(tmax-tmin));//推导公式
 	return tv;
+}
+
+var textmesh;
+
+//输出文本 方法：1
+function echoText() {
+	textmesh = new THREE.Object3D();
+	var loader = new THREE.FontLoader(); //新建字体对象
+	loader.load(
+		'./fonts/gentilis_bold.typeface.json',
+		function(response) {
+			textmesh = new THREE.Mesh(
+				new THREE.TextGeometry('zhong hua', {
+					font: response,
+					size: 5,
+					height: 1
+				}),
+				new THREE.MeshLambertMaterial({
+					color: 0x156289,
+					emissive: 0x072534,
+					side: THREE.DoubleSide,
+					shading: THREE.FlatShading
+				})
+			);
+			textmesh.position.z = -20;
+			textmesh.position.y = 200;
+			textmesh.rotation.x = Math.PI / 4;
+			scene.add(textmesh)
+		}
+	);
+}
+
+var font, textMesh1;
+//加载字体
+loadFont = function(url) {
+	var loader = new THREE.FontLoader();
+	loader.load(url, function(response) {
+		font = response;
+		refreshText();
+	});
+}
+//创建一个字体对象
+CreateText = function(text) {
+	this.mesh = new THREE.Object3D();
+	var textGeo = new THREE.TextGeometry(text, {
+		font: font,
+		size: 5,
+		height: 1
+	});
+	var MeshLambertMaterial = new THREE.MeshLambertMaterial({
+		color: 0x156289,
+		emissive: 0x072534,
+		side: THREE.DoubleSide,
+		shading: THREE.FlatShading
+	});
+	var textmesh = new THREE.Mesh(textGeo, MeshLambertMaterial);
+	textGeo.computeBoundingBox();
+	var centerOffset = -0.5 * (textGeo.boundingBox.max.x - textGeo.boundingBox.min.x);
+	textmesh.position.x = centerOffset;
+	this.mesh.add(textmesh);
+	scene.add(this.mesh);
+	MESHLIST.push(textmesh);
+}
+//刷新字体
+function refreshText() {
+	//	CreateText('aiwo zhonghua',textmesh1);
+	textmesh1 = new CreateText('hello!');
+	textmesh1.mesh.position.y = 200;
+	textmesh1.mesh.position.z = -20;
+	textmesh1.mesh.rotation.x = Math.PI / 4;
+
+	var textmesh2 = new CreateText('杨殿铭');
+	textmesh2.mesh.position.y = 200;
+	textmesh2.mesh.position.z = 20;
+	textmesh2.mesh.rotation.y = Math.PI;
+	textmesh2.mesh.rotation.x = -Math.PI / 4;
 }

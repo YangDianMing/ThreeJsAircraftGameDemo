@@ -25,7 +25,6 @@ var AirPlane = function() {
 	cockpit.castShadow = true;
 	cockpit.receiveShadow = true;
 	this.mesh.add(cockpit);
-
 	// 创建引擎
 	var geomEngine = new THREE.BoxGeometry(20, 50, 50, 1, 1, 1);
 	var matEngine = new THREE.MeshPhongMaterial({
@@ -37,7 +36,7 @@ var AirPlane = function() {
 	engine.castShadow = true;
 	engine.receiveShadow = true;
 	this.mesh.add(engine);
-
+	
 	// 创建机尾
 	var geomTailPlane = new THREE.BoxGeometry(15, 20, 5, 1, 1, 1);
 	var matTailPlane = new THREE.MeshPhongMaterial({

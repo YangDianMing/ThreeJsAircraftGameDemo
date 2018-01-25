@@ -2,7 +2,7 @@
 var Cloud = function() {
 	// 创建一个空的容器放置不同形状的云
 	this.mesh = new THREE.Object3D();
-
+	
 	// 创建一个正方体
 	// 这个形状会被复制创建云
 	var geom = new THREE.BoxGeometry(20, 20, 20);
@@ -18,7 +18,7 @@ var Cloud = function() {
 
 		// 通过复制几何体创建网格
 		var m = new THREE.Mesh(geom, mat);
-
+		MESHLIST.push(m);
 		// 随机设置每个正方体的位置和旋转角度
 		m.position.x = i * 15;
 		m.position.y = Math.random() * 10;
@@ -37,6 +37,7 @@ var Cloud = function() {
 		// 将正方体添加至开始时我们创建的容器中
 		this.mesh.add(m);
 	}
+	
 }
 // 定义一个天空对象
 var Sky = function() {
